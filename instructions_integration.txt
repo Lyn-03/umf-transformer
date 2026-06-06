@@ -1,0 +1,270 @@
+================================================================================
+  UFM-TRANSFORMER PROJECT - INTEGRATION GUIDE
+  Step-by-Step Instructions to Generate Results and Produce Final PDFs
+================================================================================
+
+This guide walks you through the complete process of running the UFM-Transformer
+ codebase, generating experimental results, figures, and LaTeX tables, and 
+integrating everything into the final article.pdf and memoire.pdf documents.
+
+================================================================================
+STEP 1: ENVIRONMENT SETUP
+================================================================================
+
+1.1 Install Python 3.10 or newer
+--------------------------------
+  $ python --version
+  # Should show Python 3.10.x or higher
+
+1.2 Create a virtual environment (recommended)
+----------------------------------------------
+  $ python -m venv venv
+  $ source venv/bin/activate        # On Linux/Mac
+  $ venv\Scripts\activate           # On Windows
+
+1.3 Install PyTorch
+-------------------
+  # For CPU-only:
+  $ pip install torch torchvision torchaudio
+
+  # For CUDA (GPU) - adjust CUDA version as needed:
+  $ pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+1.4 Install project dependencies
+--------------------------------
+  $ pip install -r requirements.txt
+
+  This installs all required packages including:
+    - numpy, scipy, pandas
+    - matplotlib, seaborn
+    - scikit-learn, scikit-image
+    - tqdm, tensorboard (optional)
+
+================================================================================
+STEP 2: DOWNLOAD THE KAGGLE DATASET
+================================================================================
+
+2.1 Obtain the dataset
+----------------------
+  Download the fingerprint dataset from Kaggle:
+    URL: https://www.kaggle.com/datasets/ruizgara/socofing
+
+  Place the downloaded files in the ./data/ directory:
+    ./data/SOCOFing/Real/
+    ./data/SOCOFing/Altered/Altered-Easy/
+    ./data/SOCOFing/Altered/Altered-Medium/
+    ./data/SOCOFing/Altered/Altered-Hard/
+
+2.2 Verify data structure
+-------------------------
+  $ ls -R ./data/SOCOFing/
+  # Should show Real/ and Altered/ subdirectories with .BMP fingerprint images
+
+================================================================================
+STEP 3: RUN TRAINING
+================================================================================
+
+3.1 Launch training
+-------------------
+  $ python main.py --mode train --dataset_path ./data --output_dir ./output
+
+  Training parameters (default):
+    - Epochs: 50
+    - Batch size: 32
+    - Learning rate: 1e-4
+    - Image size: 224x224
+    - Train/val/test split: 70/15/15
+
+  Training outputs:
+    - Model checkpoints saved to ./output/
+    - Best model: ./output/best_model.pth
+    - Training logs in ./output/logs/
+
+3.2 Monitor training (optional)
+-------------------------------
+  $ tensorboard --logdir ./output/logs/
+  # Open http://localhost:6006 in your browser
+
+================================================================================
+STEP 4: RUN EVALUATION
+================================================================================
+
+4.1 Evaluate the trained model
+------------------------------
+  $ python main.py --mode eval --model_path ./output/best_model.pth --dataset_path ./data
+
+  This produces:
+    - Console output with all metrics (EER, TAR@FAR, AUC, ECE, MCE)
+    - LaTeX table files in ./results/tables/
+    - Figures in ./results/figures/
+
+4.2 Check generated outputs
+----------------------------
+  After evaluation, verify the following files exist:
+
+  Tables:
+    ./results/tables/metrics_main.tex
+    ./results/tables/metrics_robustness.tex
+    ./results/tables/metrics_calibration.tex
+    ./results/tables/metrics_ablation.tex
+
+  Figures:
+    ./results/figures/roc_curve.pdf
+    ./results/figures/det_curve.pdf
+    ./results/figures/confusion_matrix.pdf
+    ./results/figures/calibration_curve.pdf
+    ./results/figures/ablation_chart.pdf
+    ./results/figures/robustness_comparison.pdf
+
+================================================================================
+STEP 5: GENERATE VISUALIZATIONS
+================================================================================
+
+5.1 Run visualization mode
+----------------------------
+  $ python main.py --mode visualize --model_path ./output/best_model.pth --dataset_path ./data
+
+  This generates additional plots:
+    - t-SNE embeddings
+    - Attention visualization heatmaps
+    - Failure case analysis figures
+
+================================================================================
+STEP 6: COPY FILES INTO THE LATEX DIRECTORY
+================================================================================
+
+6.1 Copy figures
+----------------
+  $ cp ./results/figures/*.pdf ./latex/figures/
+
+  Verify all figures are in place:
+    $ ls ./latex/figures/
+
+6.2 Copy LaTeX tables
+---------------------
+  $ cp ./results/tables/*.tex ./latex/tables/
+
+  Verify all tables are in place:
+    $ ls ./latex/tables/
+
+================================================================================
+STEP 7: REPLACE PLACEHOLDERS IN .TEX FILES
+================================================================================
+
+7.1 Understand the placeholder format
+--------------------------------------
+  Throughout article.tex and memoire.tex, you will find placeholders like:
+    \textcolor{red}{\textbf{XX.XX\%}}   % INSERER VALEUR EER
+
+  The red color highlights values that need to be replaced with actual results.
+
+7.2 Replacement workflow
+--------------------------
+  For each placeholder in article.tex and memoire.tex:
+
+  a) Open the .tex file in your text editor
+  b) Search for "textcolor{red}" to find all placeholders
+  c) For each placeholder:
+       - Look at the nearby comment (e.g., "% INSERER VALEUR EER")
+       - Find the corresponding value in the evaluation console output
+       - Or check the generated table files in ./results/tables/
+       - Replace XX.XX with the actual numeric value
+       - Remove the \textcolor{red}{} wrapper (optional: keep for highlighting)
+       - Remove the % INSERER VALEUR... comment
+
+7.3 Example replacement
+------------------------
+  BEFORE:
+    EER: \textcolor{red}{\textbf{XX.XX\%}}   % INSERER VALEUR EER OBTENUE
+
+  AFTER (option A - clean):
+    EER: \textbf{1.23\%}
+
+  AFTER (option B - keep highlighting during review):
+    EER: \textcolor{red}{\textbf{1.23\%}}
+
+7.4 Inventory of placeholders to replace
+-----------------------------------------
+  Section          | Metric                    | Format
+  -----------------|---------------------------|--------
+  Article S4.3     | EER (%)                   | XX.XX
+  Article S4.3     | TAR@0.1%FAR (%)           | XX.XX
+  Article S4.3     | TAR@1%FAR (%)             | XX.XX
+  Article S4.3     | AUC (%)                   | XX.XX
+  Article S4.4     | EER under degradation (%) | XX.XX
+  Article S4.5     | ECE (%)                   | XX.XX
+  Article S4.5     | MCE (%)                   | XX.XX
+  Article S4.6     | Ablation EER (%)          | XX.XX
+  Article S5       | All summary metrics       | XX.XX
+
+  (Same for Memoire S3.3 through S3.6 and Conclusion)
+
+================================================================================
+STEP 8: COMPILE LATEX DOCUMENTS
+================================================================================
+
+8.1 Compile article.pdf
+-----------------------
+  $ cd ./latex
+  $ pdflatex article.tex
+  $ bibtex article
+  $ pdflatex article.tex
+  $ pdflatex article.tex
+
+  The final document will be: ./latex/article.pdf
+
+8.2 Compile memoire.pdf
+-----------------------
+  $ pdflatex memoire.tex
+  $ bibtex memoire
+  $ pdflatex memoire.tex
+  $ pdflatex memoire.tex
+
+  The final document will be: ./latex/memoire.pdf
+
+8.3 Troubleshooting compilation errors
+---------------------------------------
+  - If figures are missing: verify Step 6 (copy figures)
+  - If table files not found: verify Step 6 (copy tables)
+  - If citations broken: run bibtex between pdflatex passes
+  - If references unresolved: compile at least 2-3 times
+
+================================================================================
+SUMMARY CHECKLIST
+================================================================================
+
+[ ] Python 3.10+ installed
+[ ] Virtual environment created and activated
+[ ] PyTorch installed (CPU or CUDA)
+[ ] requirements.txt installed
+[ ] Kaggle dataset downloaded to ./data/
+[ ] Training completed (best_model.pth exists)
+[ ] Evaluation completed (metrics displayed)
+[ ] All figures generated in ./results/figures/
+[ ] All tables generated in ./results/tables/
+[ ] Figures copied to ./latex/figures/
+[ ] Tables copied to ./latex/tables/
+[ ] All red placeholders replaced with actual values
+[ ] Comments (% INSERER VALEUR...) removed
+[ ] article.pdf compiled successfully
+[ ] memoire.pdf compiled successfully
+
+================================================================================
+QUICK REFERENCE COMMANDS
+================================================================================
+
+# Full pipeline (after setup):
+  pip install -r requirements.txt
+  python main.py --mode train --dataset_path ./data --output_dir ./output
+  python main.py --mode eval --model_path ./output/best_model.pth --dataset_path ./data
+  python main.py --mode visualize --model_path ./output/best_model.pth --dataset_path ./data
+  cp ./results/figures/*.pdf ./latex/figures/
+  cp ./results/tables/*.tex ./latex/tables/
+  # (Edit .tex files to replace placeholders)
+  cd ./latex && pdflatex article.tex && bibtex article && pdflatex article.tex
+  cd ./latex && pdflatex memoire.tex && bibtex memoire && pdflatex memoire.tex
+
+================================================================================
+For questions or issues, refer to the project README.md or the placeholder_guide.tex
+reference document in the ./latex/ directory.
+================================================================================
