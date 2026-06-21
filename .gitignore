@@ -1,0 +1,12 @@
+.venv
+data
+PlamMatchDB.zip
+article*.md
+croissant
+dataset-metadata.json
+*.png
+history.txt
+instructions_integration.txt
+memoire*.md
+multimodal-biometric*.zip
+__pycache__/

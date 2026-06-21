@@ -1,0 +1,113 @@
+# =============================================================================
+# UFM-Transformer: Python Dependencies
+# =============================================================================
+# Install with:  pip install -r requirements.txt
+# Python >= 3.10 required
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Core Deep Learning (PyTorch)
+# ---------------------------------------------------------------------------
+torch>=2.0.0
+#   - PyTorch core: tensors, autograd, nn.Module, optim, DataLoader
+torchvision>=0.15.0
+#   - Image transforms, pre-built datasets, pretrained models
+timm>=0.9.0
+#   - EfficientNet-B2 backbone for face encoder (ImageNet pretrained weights)
+
+# ---------------------------------------------------------------------------
+# Computer Vision & Image Processing
+# ---------------------------------------------------------------------------
+opencv-python>=4.8.0
+#   - Grad-CAM heatmap overlays, image I/O, contour detection
+Pillow>=9.5.0
+#   - Image loading, filtering (GaussianBlur), format conversion
+kornia>=0.7.0
+#   - Differentiable computer vision operations (optional augmentations)
+
+# ---------------------------------------------------------------------------
+# Scientific Computing
+# ---------------------------------------------------------------------------
+numpy>=1.24.0
+#   - Array operations, metric computations (EER, ROC)
+scipy>=1.11.0
+#   - Statistical functions (norm CDF), signal processing
+
+# ---------------------------------------------------------------------------
+# Machine Learning Utilities
+# ---------------------------------------------------------------------------
+scikit-learn>=1.3.0
+#   - ROC/AUC computation, confusion matrices, metric utilities
+
+# ---------------------------------------------------------------------------
+# Data Processing
+# ---------------------------------------------------------------------------
+pandas>=2.0.0
+#   - DataFrame handling for metric logging and result tables
+
+# ---------------------------------------------------------------------------
+# Visualization
+# ---------------------------------------------------------------------------
+matplotlib>=3.7.0
+#   - Publication-quality figures (ROC, DET, confusion matrices, calibration)
+seaborn>=0.12.0
+#   - Statistical visualizations (heatmaps, distribution plots)
+
+# ---------------------------------------------------------------------------
+# Progress & Logging
+# ---------------------------------------------------------------------------
+tqdm>=4.65.0
+#   - Progress bars for training and evaluation loops
+
+# ---------------------------------------------------------------------------
+# Optional Dependencies (enhanced functionality)
+# ---------------------------------------------------------------------------
+# tensorboard>=2.13.0
+#   - Training visualization and experiment tracking
+#   Install with: pip install tensorboard
+
+# jupyterlab>=4.0.0
+#   - Interactive notebooks for exploration and debugging
+#   Install with: pip install jupyterlab
+
+# rich>=13.0.0
+#   - Enhanced console output and logging formatting
+#   Install with: pip install rich
+
+# ---------------------------------------------------------------------------
+# Development Dependencies (not required for running)
+# ---------------------------------------------------------------------------
+# pytest>=7.4.0
+#   - Unit testing framework
+#   Install with: pip install pytest
+
+# black>=23.7.0
+#   - Code formatting
+#   Install with: pip install black
+
+# mypy>=1.5.0
+#   - Static type checking
+#   Install with: pip install mypy
+
+# ruff>=0.0.285
+#   - Fast Python linter
+#   Install with: pip install ruff
+
+# ---------------------------------------------------------------------------
+# Version compatibility notes
+# ---------------------------------------------------------------------------
+# torch >= 2.0.0 is required for:
+#   - torch.compile() support
+#   - torch.cuda.amp.GradScaler (stable API)
+#   - torch.utils.hooks (forward hook API used in attention extraction)
+#
+# torchvision >= 0.15.0 matches PyTorch 2.0+ API
+#
+# timm >= 0.9.0 provides:
+#   - efficientnet_b2 pretrained weights
+#   - Stable API for feature extraction (num_classes=0, global_pool="")
+#
+# scikit-learn >= 1.3.0 is required for stable ROC curve APIs
+#
+# opencv-python >= 4.8.0 for cv2.colormap APIs used in Grad-CAM
+# =============================================================================
