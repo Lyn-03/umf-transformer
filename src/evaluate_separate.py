@@ -193,20 +193,13 @@ def _extract_embeddings(
             images = images.to(device, non_blocking=True)
 
             if modality == "face":
-                feat_map = model.face_encoder(images)          # (B, C, H, W)
-                proj = model.face_projector                    # Projector module
+                _, global_feature = model.face_encoder(images)
+                proj = model.face_projector
             else:
-                feat_map = model.fp_encoder(images)            # (B, C, H, W)
+                _, global_feature = model.fp_encoder(images)
                 proj = model.fp_projector
 
-            # Global-average pool the feature map, then project to embed space
-            # Shape: (B, C, H, W) -> (B, C) via adaptive avg pool
-            if feat_map.dim() == 4:
-                feat_vec = F.adaptive_avg_pool2d(feat_map, (1, 1)).flatten(1)  # (B, C)
-            else:
-                feat_vec = feat_map  # already (B, C)
-
-            z = proj(feat_vec)                                  # (B, embed_dim)
+            z = proj(global_feature)                            # (B, embed_dim)
             z = F.normalize(z, p=2, dim=1)                     # L2-normalise
 
             embeddings_list.append(z.cpu())
