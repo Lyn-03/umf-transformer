@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-def add_install_cell():
+def add_clean_cell():
     notebook_path = Path("ufm-training.ipynb")
     if not notebook_path.exists():
         notebook_path = Path("src/ufm-training.ipynb")
@@ -14,8 +14,8 @@ def add_install_cell():
     with open(notebook_path, "r", encoding="utf-8") as f:
         nb = json.load(f)
 
-    # Define the new cell to insert
-    install_cell = {
+    # Define the new cleaning cell to insert
+    clean_cell = {
         "cell_type": "code",
         "execution_count": None,
         "metadata": {
@@ -23,8 +23,16 @@ def add_install_cell():
         },
         "outputs": [],
         "source": [
-            "# Install pdflatex and dependencies on Kaggle (requires internet enabled in notebook settings)\n",
-            "!apt-get update && apt-get install -y texlive-latex-base texlive-latex-extra texlive-fonts-recommended cm-super texlive-bibtex-extra texlive-publishers texlive-lang-french texlive-science\n"
+            "# Clean up LaTeX directory except for main .tex templates\n",
+            "import shutil\n",
+            "if LATEX_DIR.exists():\n",
+            "    for path in LATEX_DIR.glob('*'):\n",
+            "        if path.name not in ['article.tex', 'memoire.tex']:\n",
+            "            if path.is_dir():\n",
+            "                shutil.rmtree(path)\n",
+            "            else:\n",
+            "                path.unlink()\n",
+            "    print('Cleaned LaTeX directory (kept article.tex and memoire.tex).')\n"
         ]
     }
 
@@ -39,9 +47,9 @@ def add_install_cell():
                 break
 
     if target_idx != -1:
-        # Insert the cell before Step 9
-        nb["cells"].insert(target_idx, install_cell)
-        print(f"Successfully inserted installation cell at index {target_idx}.")
+        # Insert the cleaning cell right before Step 9 markdown cell
+        nb["cells"].insert(target_idx, clean_cell)
+        print(f"Successfully inserted cleaning cell at index {target_idx}.")
         
         # Save the notebook
         with open(notebook_path, "w", encoding="utf-8") as f:
@@ -52,4 +60,4 @@ def add_install_cell():
         print("Error: Could not find '## 9) Compile LaTeX PDFs' markdown cell.")
 
 if __name__ == "__main__":
-    add_install_cell()
+    add_clean_cell()
