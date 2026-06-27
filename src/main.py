@@ -258,6 +258,38 @@ def build_argument_parser() -> argparse.ArgumentParser:
              "gracefully (default: None = run until natural completion).",
     )
 
+    # Performance optimisation flags
+    perf_group = parser.add_argument_group("Performance optimisations")
+    amp_grp = perf_group.add_mutually_exclusive_group()
+    amp_grp.add_argument(
+        "--use_amp",
+        action="store_true",
+        default=True,
+        dest="use_amp",
+        help="Enable Automatic Mixed Precision training (default: enabled).",
+    )
+    amp_grp.add_argument(
+        "--no_amp",
+        action="store_false",
+        dest="use_amp",
+        help="Disable AMP (fall back to FP32).",
+    )
+    perf_group.add_argument(
+        "--synthetic_samples",
+        type=int,
+        default=50_000,
+        dest="synthetic_samples_per_epoch",
+        help="Max synthetic pairs per Phase-2 epoch (default: 50000). "
+             "Use 0 or a negative value to use the full dataset.",
+    )
+    perf_group.add_argument(
+        "--mc_samples_train",
+        type=int,
+        default=1,
+        help="MC-Dropout samples during training (default: 1 for speed; "
+             "use 5 only at inference).",
+    )
+
     # Evaluation-specific arguments
     eval_group = parser.add_argument_group("Evaluation options")
     eval_group.add_argument(
@@ -383,6 +415,14 @@ def run_training(args: argparse.Namespace) -> None:
             checkpoint_every=getattr(args, "checkpoint_every", args.save_every),
             resume_from=args.resume,
             embedding_dim=args.embed_dim,
+            # Performance optimisations
+            use_amp=args.use_amp,
+            synthetic_samples_per_epoch=(
+                args.synthetic_samples_per_epoch
+                if args.synthetic_samples_per_epoch > 0
+                else None
+            ),
+            mc_samples_train=args.mc_samples_train,
         )
 
         gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0

@@ -1171,32 +1171,35 @@ class UncertaintyHead(nn.Module):
 
         # ------------------------------------------------------------------
         # Step 1: Monte-Carlo Dropout sampling.
-        # Run T forward passes with dropout enabled to collect a distribution
-        # of predictions.  The spread of these predictions = epistemic uncertainty.
+        # During **training** we use a single stochastic sample to avoid
+        # running 5 extra forward passes per batch (4× overhead reduction).
+        # Full mc_samples are used only at inference for reliable uncertainty.
         # ------------------------------------------------------------------
+        # Capture current mode FIRST, then decide how many samples to draw
+        training_state = self.training
+        n_samples = 1 if training_state else self.mc_samples
         mc_predictions: List[Tensor] = []
 
-        # Ensure dropout is enabled during MC sampling
-        training_state = self.training
-        self.train(True)  # Force dropout on
+        # Force dropout on for MC sampling regardless of model mode
+        self.train(True)
 
-        for _ in range(self.mc_samples):
+        for _ in range(n_samples):
             sim = self._similarity_with_dropout(z1, z2)  # (B,)
             mc_predictions.append(sim)
 
-        # Restore training state
+        # Restore original training state
         self.train(training_state)
 
-        # Stack: (T, B) -> transpose to (B, T)
+        # Stack: (T, B) → transpose to (B, T)
         mc_stacked = torch.stack(mc_predictions, dim=1)  # (B, T)
 
         # ------------------------------------------------------------------
         # Step 2: Compute epistemic uncertainty.
-        # This is the variance of predictions across MC samples.
-        # High variance = model is uncertain about this input.
+        # With T=1 during training, variance is zero (no spread) —
+        # the aleatoric component still carries a useful gradient signal.
         # ------------------------------------------------------------------
         mean_prediction = mc_stacked.mean(dim=1)    # (B,)
-        epistemic_var = mc_stacked.var(dim=1, unbiased=True)  # (B,)
+        epistemic_var = mc_stacked.var(dim=1, unbiased=False)  # (B,) — use biased var to avoid NaN at T=1
 
         # Ensure non-negative (numerical safety)
         epistemic_var = torch.clamp(epistemic_var, min=0.0)

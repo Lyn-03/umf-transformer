@@ -49,6 +49,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
@@ -290,6 +291,16 @@ class TrainConfig:
     num_face_subjects: Optional[int] = None
     num_fp_subjects: Optional[int] = None
 
+    # Performance -----------------------------------------------------------
+    use_amp: bool = True
+    """Enable Automatic Mixed Precision (AMP) training for ~2-3x speedup on T4/V100."""
+    synthetic_samples_per_epoch: Optional[int] = 50_000
+    """Cap on Phase-2 SyntheticPairDataset size per epoch.  None = use full dataset."""
+    mc_samples_train: int = 1
+    """Number of MC-Dropout samples during training (use 1 for speed; full at inference)."""
+    num_workers: int = 4
+    """DataLoader worker processes (overrides the base num_workers default)."""
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize configuration to a JSON-compatible dictionary."""
         return asdict(self)
@@ -495,14 +506,13 @@ class UFMLoss(nn.Module):
         embeddings: torch.Tensor,
         labels: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Perform hard negative mining for triplet selection.
+        """Perform hard negative mining for triplet selection (fully vectorised).
 
         For each anchor in the batch:
         - **Hardest positive**: the same-class sample with maximum distance.
         - **Hardest negative**: the different-class sample with minimum distance.
 
-        This is more efficient than random triplet selection and produces
-        more informative gradients.
+        Implemented without Python-level loops for GPU efficiency.
 
         Args:
             embeddings: Normalised feature vectors of shape (B, D).
@@ -516,39 +526,43 @@ class UFMLoss(nn.Module):
         device = embeddings.device
 
         # Pairwise squared L2 distances: (B, B)
-        # dist[i, j] = ||emb_i - emb_j||^2
         dist_matrix = torch.cdist(embeddings, embeddings, p=2).pow(2)
 
-        anchors = embeddings.clone()
-        positives = torch.zeros_like(embeddings)
-        negatives = torch.zeros_like(embeddings)
+        # (B, B) boolean masks for same / different subject pairs
+        label_matrix = labels.unsqueeze(0) == labels.unsqueeze(1)  # (B, B)
+        # Exclude the diagonal (self-pair) from positives
+        eye_mask = ~torch.eye(batch_size, dtype=torch.bool, device=device)  # (B, B)
+        same_mask = label_matrix & eye_mask   # True where same subject AND not self
+        diff_mask = ~label_matrix              # True where different subject
 
-        for i in range(batch_size):
-            # Boolean mask: same subject (positive pool) and different (negative pool)
-            same_subject = labels == labels[i]
-            diff_subject = ~same_subject
+        # ------------------------------------------------------------------ #
+        # Hardest positives: argmax of distance within same-subject pool      #
+        # ------------------------------------------------------------------ #
+        # Fill non-positive entries with -1 so argmax always picks a positive
+        pos_dists = dist_matrix.masked_fill(~same_mask, -1.0)
+        hardest_pos_idx = pos_dists.argmax(dim=1)  # (B,)
+        # Fallback: when no positive exists, use self (gives zero loss)
+        has_positive = same_mask.any(dim=1)  # (B,)
+        self_idx = torch.arange(batch_size, device=device)
+        pos_idx = torch.where(has_positive, hardest_pos_idx, self_idx)
+        positives = embeddings[pos_idx]  # (B, D)
 
-            # Exclude self from positive pool
-            same_subject[i] = False
+        # ------------------------------------------------------------------ #
+        # Hardest negatives: argmin of distance within different-subject pool  #
+        # ------------------------------------------------------------------ #
+        neg_dists = dist_matrix.masked_fill(~diff_mask, float("inf"))
+        hardest_neg_idx = neg_dists.argmin(dim=1)  # (B,)
+        # Fallback: when no negative exists (homogeneous batch), use global mean
+        has_negative = diff_mask.any(dim=1)  # (B,)
+        negatives_mean = embeddings.mean(dim=0, keepdim=True).expand(batch_size, -1)
+        negatives_raw = embeddings[hardest_neg_idx]  # (B, D)
+        negatives = torch.where(
+            has_negative.unsqueeze(1).expand_as(negatives_raw),
+            negatives_raw,
+            negatives_mean,
+        )  # (B, D)
 
-            # Hardest positive: furthest same-subject sample
-            if same_subject.sum() > 0:
-                pos_dists = dist_matrix[i].masked_fill(~same_subject, -1.0)
-                hardest_pos_idx = pos_dists.argmax()
-                positives[i] = embeddings[hardest_pos_idx]
-            else:
-                # Fallback: use self as positive (will give zero loss)
-                positives[i] = embeddings[i]
-
-            # Hardest negative: closest different-subject sample
-            if diff_subject.sum() > 0:
-                neg_dists = dist_matrix[i].masked_fill(~diff_subject, float("inf"))
-                hardest_neg_idx = neg_dists.argmin()
-                negatives[i] = embeddings[hardest_neg_idx]
-            else:
-                # Fallback: use mean of all embeddings
-                negatives[i] = embeddings.mean(dim=0)
-
+        anchors = embeddings  # (B, D)
         return anchors, positives, negatives
 
     def _uncertainty_loss(
@@ -1086,6 +1100,7 @@ def train_epoch(
     config: TrainConfig,
     epoch: int,
     use_modality_masking: bool = False,
+    scaler: Optional[GradScaler] = None,
 ) -> Dict[str, float]:
     """Execute one training epoch.
 
@@ -1103,6 +1118,8 @@ def train_epoch(
         epoch: Current epoch number (for logging).
         use_modality_masking: If True, applies random modality dropout.
             Used only in Phase 2. Defaults to False.
+        scaler: Optional GradScaler for AMP. Created internally when
+            ``config.use_amp`` is True and scaler is None.
 
     Returns:
         Dictionary of averaged epoch metrics:
@@ -1115,6 +1132,9 @@ def train_epoch(
             - learning_rate: Current learning rate.
     """
     model.train()
+    amp_enabled = config.use_amp and device.type == "cuda"
+    if scaler is None and amp_enabled:
+        scaler = GradScaler()
 
     epoch_losses: Dict[str, List[float]] = defaultdict(list)
     all_embeddings: List[torch.Tensor] = []
@@ -1158,28 +1178,32 @@ def train_epoch(
                 dropout_prob=config.modality_dropout_prob,
             )
 
-        # Forward pass
+        # Forward pass + loss under AMP autocast
         optimizer.zero_grad()
-        outputs = _run_model_forward(
-            model=model,
-            face=face,
-            fingerprint=fingerprint,
-            face_quality=face_quality,
-            fp_quality=fp_quality,
-            face_missing=face_missing,
-            fp_missing=fp_missing,
-        )
+        with autocast(enabled=amp_enabled):
+            outputs = _run_model_forward(
+                model=model,
+                face=face,
+                fingerprint=fingerprint,
+                face_quality=face_quality,
+                fp_quality=fp_quality,
+                face_missing=face_missing,
+                fp_missing=fp_missing,
+            )
+            # Compute loss
+            loss, loss_dict = criterion(_outputs_for_ufm_loss(outputs), labels)
 
-        # Compute loss
-        loss, loss_dict = criterion(_outputs_for_ufm_loss(outputs), labels)
-
-        # Backward pass
-        loss.backward()
-
-        # Gradient clipping for training stability
-        torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
-
-        optimizer.step()
+        # Backward pass (scaled when AMP is active)
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            optimizer.step()
 
         # Accumulate metrics
         epoch_losses["loss"].append(loss.item())
@@ -2229,6 +2253,12 @@ def train_phase2_joint_separate(
     start_epoch = max(1, int(start_epoch))
     logger.info("Phase 2 separate starts at epoch %d", start_epoch)
 
+    # AMP GradScaler (no-op when AMP is disabled or device is CPU)
+    amp_enabled = config.use_amp and device.type == "cuda"
+    scaler = GradScaler() if amp_enabled else None
+    if amp_enabled:
+        logger.info("AMP (Automatic Mixed Precision) ENABLED for Phase 2 separate.")
+
     for epoch in range(start_epoch, config.epochs_phase2 + 1):
         epoch_start = time.time()
         model.train()
@@ -2276,26 +2306,33 @@ def train_phase2_joint_separate(
                     dropout_prob=config.modality_dropout_prob,
                 )
 
-            # Full forward pass
-            outputs = _run_model_forward(
-                model=model,
-                face=face,
-                fingerprint=fingerprint,
-                face_quality=face_q,
-                fp_quality=fp_q,
-                face_missing=face_missing,
-                fp_missing=fp_missing,
-            )
-
-            # Build the dict expected by UFMLoss
-            loss_inputs = _outputs_for_ufm_loss(outputs)
-
-            loss, loss_dict = criterion(loss_inputs, labels)
-
+            # Full forward pass + loss under AMP autocast
             optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
-            optimizer.step()
+            with autocast(enabled=amp_enabled):
+                outputs = _run_model_forward(
+                    model=model,
+                    face=face,
+                    fingerprint=fingerprint,
+                    face_quality=face_q,
+                    fp_quality=fp_q,
+                    face_missing=face_missing,
+                    fp_missing=fp_missing,
+                )
+                # Build the dict expected by UFMLoss
+                loss_inputs = _outputs_for_ufm_loss(outputs)
+                loss, loss_dict = criterion(loss_inputs, labels)
+
+            # Backward pass (scaled when AMP is active)
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+                optimizer.step()
 
             epoch_losses["loss"].append(loss.item())
             for key, value in loss_dict.items():
@@ -2628,6 +2665,7 @@ def main(config: Optional[TrainConfig] = None) -> nn.Module:
             seed=config.seed,
             pin_memory=config.pin_memory,
             distributed=_is_distributed(),
+            synthetic_samples_per_epoch=config.synthetic_samples_per_epoch,
         )
 
         face_loader = loaders["face_loader"]
