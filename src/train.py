@@ -2398,7 +2398,7 @@ def train_phase2_joint_separate(
 
 def save_checkpoint(
     model: nn.Module,
-    optimizer: torch.optim.Optimizer,
+    optimizer: Optional[torch.optim.Optimizer],
     scheduler: Optional[Any],
     epoch: int,
     metrics: Dict[str, Any],
@@ -2414,7 +2414,7 @@ def save_checkpoint(
 
     Args:
         model: The model to checkpoint.
-        optimizer: The optimiser to checkpoint.
+        optimizer: The optimiser to checkpoint (optional).
         scheduler: The LR scheduler to checkpoint (optional).
         epoch: Current training epoch.
         metrics: Dictionary of current metrics.
@@ -2436,7 +2436,7 @@ def save_checkpoint(
         "epoch": epoch,
         "phase": phase,
         "model_state_dict": underlying.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
         "metrics": metrics,
         "config": config.to_dict(),
     }
